@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Golden-Angle Torus Knot — Spin + Record (0→720) + Accuracy</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+  html,body{margin:0;height:100%;background:#0b1020;color:#e8eefc;font-family:system-ui,Segoe UI,Roboto,sans-serif}
+  canvas{display:block}
+  #ui{
+    position:fixed;right:16px;top:16px;width:460px;background:rgba(25,28,40,.85);
+    border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px;backdrop-filter:blur(6px);z-index:5
+  }
+  #ui h3{margin:0 0 8px}
+  .row{margin:8px 0;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+  .row input[type="range"], .row select{grid-column:1/3;width:100%;accent-color:#7aa2ff}
+  .view-buttons{display:flex;gap:6px}
+  .view-buttons button{
+    flex:1; padding:6px 8px; border-radius:8px; border:1px solid rgba(255,255,255,.12);
+    background:#151a28; color:#e8eefc; cursor:pointer
+  }
+  .view-buttons button.active{background:#24304d}
+  #recBtn{
+    width:100%; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.15);
+    background:#1d2a46; color:#e8eefc; cursor:pointer; font-weight:600
+  }
+  #recBtn.recording{background:#7a1f1f}
+  #downloadLink{display:block;margin-top:6px;font-size:13px}
+  small{opacity:.7;line-height:1.2}
+</style>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.157.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<div id="ui">
+  <h3>Golden-Angle Torus Knot (Closed p/q)</h3>
+
+  <div class="row">
+    <label>Fibonacci approximant p/q</label>
+    <select id="pq">
+      <option value="21,55" selected>21/55</option>
+      <option value="34,89">34/89</option>
+      <option value="55,144">55/144</option>
+      <option value="89,233">89/233</option>
+    </select>
+  </div>
+
+  <div class="row"><label>Outer radius R (φ²)</label><span id="Rval">2.618</span>
+    <input id="R" type="range" min="0.5" max="4" step="0.001" value="2.618033989" />
+  </div>
+  <div class="row"><label>Inner radius r (≤ φ)</label><span id="rval">1.000</span>
+    <input id="r" type="range" min="0.1" max="1.6180339887" step="0.001" value="1.0" />
+  </div>
+  <div class="row"><label>Tube radius</label><span id="tubeVal">0.002</span>
+    <input id="tube" type="range" min="0.002" max="0.06" step="0.001" value="0.002" />
+  </div>
+
+  <div class="row"><label>Segments per wrap</label><span id="sprVal">144</span>
+    <input id="spr" type="range" min="20" max="400" step="1" value="144" />
+  </div>
+
+  <div class="row"><label>Show torus (tube)</label><input id="showTube" type="checkbox" checked /></div>
+  <div class="row"><label>Show points</label><input id="showPts" type="checkbox" checked /></div>
+  <div class="row"><label>Points count (loop 0↔720)</label><span id="ptsVal">300</span>
+    <input id="pts" type="range" min="0" max="2000" step="1" value="300" />
+  </div>
+  <div class="row"><label>Point size</label><span id="ptSizeVal">0.040</span>
+    <input id="ptSize" type="range" min="0.002" max="0.12" step="0.001" value="0.040" />
+  </div>
+  <div class="row"><label>Loop points 0↔720</label><input id="loopPts" type="checkbox" checked /></div>
+  <div class="row"><label>Loop speed (pts/sec)</label><span id="loopVal">2</span>
+    <input id="loopSpeed" type="range" min="1" max="500" step="1" value="2" />
+  </div>
+
+  <!-- Accuracy slider with textual labels -->
+  <div class="row"><label>Accuracy</label><span id="accLabel">High</span>
+    <input id="accuracy" type="range" min="1" max="4" step="1" value="3" />
+  </div>
+  <div class="row" style="grid-column:1/3"><small>
+    Accuracy affects equal-spacing precision of points (arc-length sampling). Low → Ultra.
+  </small></div>
+
+  <div class="row">
+    <label>View</label>
+    <div class="view-buttons" style="grid-column:1/3">
+      <button id="viewFree">Free</button>
+      <button id="viewTop" class="active">Top</button>
+      <button id="viewSide">Horizontal</button>
+      <button id="viewFront">Vertical</button>
+    </div>
+  </div>
+
+  <!-- Spin controls -->
+  <div class="row"><label>Spin around vertical (Y)</label><input id="spinToggle" type="checkbox" checked /></div>
+  <div class="row"><label>Spin speed (deg/sec)</label><span id="spinVal">45</span>
+    <input id="spinSpeed" type="range" min="-360" max="360" step="1" value="45" />
+  </div>
+
+  <div class="row" style="grid-template-columns:1fr">
+    <button id="recBtn">⏺ Record current p/q (0→720, WebM)</button>
+    <a id="downloadLink"></a>
+  </div>
+
+  <div class="row">
+    <small style="grid-column:1/1">
+      Record hides the torus and captures 0→720 points at your current loop speed (default 2 pts/sec).  
+      Spin and accuracy settings are respected in recordings. No auto camera/zoom.
+    </small>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x0b1020);
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.01,100);
+const DEFAULT_DIST=5.5;
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:false});
+renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+document.body.appendChild(renderer.domElement);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true; controls.target.set(0,0,0);
+scene.add(new THREE.HemisphereLight(0xffffff,0x080820,1));
+
+// Group to rotate torus + points together
+const knotGroup = new THREE.Group();
+scene.add(knotGroup);
+
+// ---- Curve
+class PQTorusCurve extends THREE.Curve{
+  constructor(R,r,p,q){super();this.R=R;this.r=r;this.p=p;this.q=q;}
+  getPoint(t,target=new THREE.Vector3()){
+    const u=2*Math.PI*this.q*t, v=2*Math.PI*this.p*t;
+    const cu=Math.cos(u), su=Math.sin(u), cv=Math.cos(v), sv=Math.sin(v);
+    target.set((this.R+this.r*cv)*cu,(this.R+this.r*cv)*su,this.r*sv); return target;
+  }
+}
+
+// ---- UI refs
+const $=id=>document.getElementById(id);
+const sel=$("pq"),Rsl=$("R"),rsl=$("r"),tube=$("tube"),spr=$("spr"),
+      showTube=$("showTube"), pts=$("pts"),ptSize=$("ptSize"),showPts=$("showPts"),
+      loopPts=$("loopPts"), loopSpeed=$("loopSpeed"),
+      accuracy=$("accuracy"),
+      spinToggle=$("spinToggle"), spinSpeed=$("spinSpeed");
+const Rval=$("Rval"),rval=$("rval"),tubeVal=$("tubeVal"),
+      sprVal=$("sprVal"),ptsVal=$("ptsVal"),ptSizeVal=$("ptSizeVal"),
+      loopVal=$("loopVal"), spinVal=$("spinVal"), accLabel=$("accLabel");
+const btnFree=$("viewFree"),btnTop=$("viewTop"),btnSide=$("viewSide"),btnFront=$("viewFront");
+const recBtn=$("recBtn"), dl=$("downloadLink");
+
+let knotMesh=null,pointsObj=null,currentCurve=null;
+const LOOP_MIN=0, LOOP_MAX=720;
+let loopRunning=true, loopDir=+1, loopPtsCount=0, lastTime=performance.now();
+
+// --- Labels
+function updateLabels(){
+  Rval.textContent=(+Rsl.value).toFixed(3);
+  rval.textContent=(+rsl.value).toFixed(3);
+  tubeVal.textContent=(+tube.value).toFixed(3);
+  sprVal.textContent=spr.value;
+  ptsVal.textContent=pts.value;
+  ptSizeVal.textContent=(+ptSize.value).toFixed(3);
+  loopVal.textContent=loopSpeed.value;
+  spinVal.textContent=spinSpeed.value;
+  const names={1:"Low",2:"Med",3:"High",4:"Ultra"};
+  accLabel.textContent=names[accuracy.value]||"High";
+}
+function computeSegments(p,q){return Math.max(200, parseInt(spr.value,10)*Math.max(p,q));}
+
+// --- Arc-length sampling scaler (for equal spacing)
+function applyArcLengthAccuracy(){
+  if(!currentCurve) return;
+  const [p,q]=sel.value.split(",").map(Number);
+  const complexity=Math.max(p,q);
+  const count=parseInt(pts.value,10);
+
+  // multipliers per level (Low→Ultra)
+  const level=parseInt(accuracy.value,10)||3;
+  const mult = level===1 ? 2 : level===2 ? 4 : level===3 ? 8 : 16;
+  const minBase = level===1 ? 1000 : level===2 ? 2000 : level===3 ? 4000 : 8000;
+
+  // Scale with complexity and requested point count
+  currentCurve.arcLengthDivisions = Math.max(minBase, Math.floor(complexity * Math.max(1,count) * mult));
+}
+
+// --- Build Knot & Points
+function buildKnot(){
+  const [p,q]=sel.value.split(",").map(Number);
+  const R=+Rsl.value, r=+rsl.value, tubeR=+tube.value;
+  const segments=computeSegments(p,q);
+  if(knotMesh){knotGroup.remove(knotMesh);knotMesh.geometry.dispose();knotMesh.material.dispose();knotMesh=null;}
+  currentCurve=new PQTorusCurve(R,r,p,q);
+
+  const geo=new THREE.TubeGeometry(currentCurve,segments,tubeR,24,true);
+
+  // tube gradient
+  const n=geo.attributes.position.count, colors=new Float32Array(n*3);
+  const c1=new THREE.Color(0x6a5acd), c2=new THREE.Color(0xffd166);
+  for(let i=0;i<n;i++){const t=i/(n-1), c=c1.clone().lerp(c2,t);
+    colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;}
+  geo.setAttribute("color",new THREE.BufferAttribute(colors,3));
+  const mat=new THREE.MeshStandardMaterial({vertexColors:true,metalness:.4,roughness:.25});
+  knotMesh=new THREE.Mesh(geo,mat);
+  knotMesh.visible=showTube.checked;
+  knotGroup.add(knotMesh);
+
+  buildPoints();
+}
+
+function hsv2rgb(h,s,v){
+  const i=Math.floor(h*6),f=h*6-i;
+  const p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
+  const m=i%6;
+  const r=[v,q,p,p,t,v][m],g=[t,v,v,q,p,p][m],b=[p,p,t,v,v,q][m];
+  return new THREE.Color(r,g,b);
+}
+function buildPoints(){
+  applyArcLengthAccuracy(); // ensure accurate spacing for current settings
+  const count=parseInt(pts.value,10), size=+ptSize.value;
+  if(pointsObj){knotGroup.remove(pointsObj);pointsObj.geometry.dispose();pointsObj.material.dispose();pointsObj=null;}
+  if(!showPts.checked||count<=0||!currentCurve) return;
+  const spaced=currentCurve.getSpacedPoints(count);
+  const pos=new Float32Array(spaced.length*3), col=new Float32Array(spaced.length*3);
+  for(let i=0;i<spaced.length;i++){
+    const p=spaced[i];
+    pos[i*3]=p.x; pos[i*3+1]=p.y; pos[i*3+2]=p.z;
+    const hue=i/Math.max(1,(spaced.length-1));
+    const c=hsv2rgb(hue,0.9,1.0);
+    col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
+  }
+  const g=new THREE.BufferGeometry();
+  g.setAttribute("position",new THREE.BufferAttribute(pos,3));
+  g.setAttribute("color",new THREE.BufferAttribute(col,3));
+  const m=new THREE.PointsMaterial({size,sizeAttenuation:true,vertexColors:true});
+  pointsObj=new THREE.Points(g,m);
+  knotGroup.add(pointsObj);
+}
+
+// --- Views (fixed distance; no auto-zoom)
+function setActive(btn){[btnFree,btnTop,btnSide,btnFront].forEach(b=>b.classList.remove("active"));btn.classList.add("active");}
+function setViewFree(){setActive(btnFree);camera.position.set(0,0.9,DEFAULT_DIST);camera.lookAt(0,0,0);controls.target.set(0,0,0);controls.update();controls.enableRotate=true;}
+function setViewTop(){setActive(btnTop);camera.position.set(0,0,DEFAULT_DIST);camera.lookAt(0,0,0);controls.target.set(0,0,0);controls.update();controls.enableRotate=false;}
+function setViewSide(){setActive(btnSide);camera.position.set(DEFAULT_DIST,0,0.0001);camera.lookAt(0,0,0);controls.target.set(0,0,0);controls.update();controls.enableRotate=false;}
+function setViewFront(){setActive(btnFront);camera.position.set(0,DEFAULT_DIST,0.0001);camera.lookAt(0,0,0);controls.target.set(0,0,0);controls.update();controls.enableRotate=false;}
+
+// --- Events
+function refreshTube(){ updateLabels(); buildKnot(); }
+function refreshPointsOnly(){ updateLabels(); buildPoints(); }
+
+[ Rsl, rsl, tube, spr, ptSize ].forEach(el=>{
+  el.addEventListener("input", refreshTube);
+  el.addEventListener("change", refreshTube);
+});
+showTube.addEventListener("change", ()=>{ if(knotMesh) knotMesh.visible = showTube.checked; });
+pts.addEventListener("input", refreshPointsOnly);
+pts.addEventListener("change", refreshPointsOnly);
+accuracy.addEventListener("input", ()=>{ updateLabels(); buildPoints(); });
+loopPts.addEventListener("change", ()=>{ loopRunning = loopPts.checked; });
+loopSpeed.addEventListener("input", ()=>{ loopVal.textContent = loopSpeed.value; });
+spinSpeed.addEventListener("input", ()=>{ spinVal.textContent = spinSpeed.value; });
+sel.addEventListener("change", ()=>{
+  refreshTube();
+  loopRunning = true; loopPts.checked = true;
+  loopPtsCount = LOOP_MIN; loopDir = +1;
+});
+btnFree.addEventListener("click", setViewFree);
+btnTop.addEventListener("click", setViewTop);
+btnSide.addEventListener("click", setViewSide);
+btnFront.addEventListener("click", setViewFront);
+
+// --- Init defaults
+function initDefaults(){
+  const phi=(1+Math.sqrt(5))/2;
+  Rsl.value=(phi*phi).toFixed(9);
+  rsl.value="1.0";
+  spr.value="144";
+  tube.value="0.002";
+  ptSize.value="0.040";
+  loopSpeed.value="2";      // default loop speed = 2
+  // accuracy default High
+  accuracy.value="3";
+  // spin defaults
+  spinToggle.checked=true;
+  spinSpeed.value="45";
+  // loop + labels
+  loopRunning=true;
+  loopPtsCount=LOOP_MIN; loopDir=+1;
+  updateLabels();
+}
+initDefaults();
+buildKnot();
+setViewTop(); // default top view
+
+// --- Recording (current p/q only, 0→720) — uses CURRENT loop speed and accuracy
+let isRecording=false, mediaRecorder=null, recChunks=[];
+let recordingActive = false;
+
+async function startRecording(){
+  if(isRecording) return;
+  isRecording=true;
+  recBtn.textContent="⏺ Recording… (WebM)";
+  recBtn.classList.add("recording");
+  recBtn.disabled=true;
+  dl.textContent=""; dl.removeAttribute("href"); dl.removeAttribute("download");
+
+  // Hide torus during recording (points only)
+  showTube.checked=false; if(knotMesh) knotMesh.visible=false;
+
+  // Reset points; use current p/q, loop speed, and accuracy
+  loopPtsCount = LOOP_MIN; loopDir = +1;
+  pts.value = "0"; ptsVal.textContent = "0";
+  buildKnot();  // rebuild points will run with applyArcLengthAccuracy()
+
+  // Start MediaRecorder
+  const stream = renderer.domElement.captureStream(60);
+  let mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9") ? "video/webm;codecs=vp9"
+           : MediaRecorder.isTypeSupported("video/webm;codecs=vp8") ? "video/webm;codecs=vp8"
+           : "video/webm";
+  mediaRecorder = new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8000000});
+  recChunks.length=0;
+  mediaRecorder.ondataavailable = e=>{ if(e.data && e.data.size>0) recChunks.push(e.data); };
+  mediaRecorder.onstop = ()=>{
+    const blob = new Blob(recChunks, {type: mediaRecorder.mimeType || "video/webm"});
+    const url = URL.createObjectURL(blob);
+    dl.href = url; dl.download = "torus-knot-currentpq-0to720.webm";
+    dl.textContent = "⬇️ Download recording (WebM)";
+  };
+  mediaRecorder.start();
+
+  recordingActive = true;
+}
+function stopRecording(){
+  if(!isRecording) return;
+  isRecording=false;
+  recordingActive=false;
+  recBtn.textContent="⏺ Record current p/q (0→720, WebM)";
+  recBtn.classList.remove("recording");
+  recBtn.disabled=false;
+  try{ mediaRecorder && mediaRecorder.state !== "inactive" && mediaRecorder.stop(); }catch{}
+}
+
+document.getElementById("recBtn").addEventListener("click", startRecording);
+
+// --- Main animate
+function animate(now){
+  const dt = Math.max(0, Math.min(0.1, (now - lastTime)/1000)); // seconds
+  lastTime = now;
+
+  // Spin group if enabled
+  if(spinToggle.checked){
+    const degPerSec = parseFloat(spinSpeed.value);
+    const radPerSec = THREE.MathUtils.degToRad(degPerSec);
+    knotGroup.rotation.y += radPerSec * dt;
+  }
+
+  if(recordingActive){
+    // Use current loop speed
+    const speed = parseFloat(loopSpeed.value) || 0;
+    loopDir = +1;
+    loopPtsCount += loopDir * speed * dt;
+    if(loopPtsCount >= LOOP_MAX){
+      loopPtsCount = LOOP_MAX;
+      const targetCount = 720;
+      if(targetCount !== parseInt(pts.value,10)){
+        pts.value = String(targetCount);
+        ptsVal.textContent = pts.value;
+        buildPoints();
+      }
+      stopRecording();
+    }else{
+      const targetCount = Math.round(loopPtsCount);
+      if(targetCount !== parseInt(pts.value,10)){
+        pts.value = String(targetCount);
+        ptsVal.textContent = pts.value;
+        buildPoints();
+      }
+    }
+  }else if(loopRunning && showPts.checked){
+    const speed = parseFloat(loopSpeed.value);
+    loopPtsCount += loopDir * speed * dt;
+    if(loopPtsCount >= LOOP_MAX){ loopPtsCount = LOOP_MAX; loopDir = -1; }
+    if(loopPtsCount <= LOOP_MIN){ loopPtsCount = LOOP_MIN; loopDir = +1; }
+    const targetCount = Math.round(loopPtsCount);
+    if(targetCount !== parseInt(pts.value,10)){
+      pts.value = String(targetCount);
+      ptsVal.textContent = pts.value;
+      buildPoints();
+    }
+  }
+
+  controls.update();
+  renderer.render(scene,camera);
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+
+// Resize
+addEventListener("resize",()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>
